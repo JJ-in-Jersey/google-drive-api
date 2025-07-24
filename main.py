@@ -9,19 +9,23 @@ from googleapiclient.errors import HttpError
 # from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
 from tt_dictionary.dictionary import Dictionary
+from tt_dataframe.dataframe import DataFrame
 from tt_exceptions.exceptions import GoogleAuthenticationFailure, GoogleServiceBuildFailure
 
 # Define the scopes required for Google Drive API access.
 # 'https://www.googleapis.com/auth/drive' gives full access to Google Drive.
-# For more restricted access, you might use 'https://www.googleapis.com/auth/drive.file'
+# For more restricted access, you might
+# use 'https://www.googleapis.com/auth/drive.file'
 # which only allows access to files created or opened by the app.
 SCOPES = ['https://www.googleapis.com/auth/drive']
 JSON = Path('google_drive.json')
 CSV_PREFIX = 'https://drive.google.com/file/d/'
-CSV_POSTFIX = '/view?usp=drive_link'
+CSV_SUFFIX = '/view?usp=drive_link'
 FOLDER_MIMETYPE = 'application/vnd.google-apps.folder'
 PNG_MIMETYPE = 'image/png'
 FILE_MIMETYPE = 'application/vnd.google-apps.file'
+IMAGES_FOLDER = 'images 3.0'
+GOOGLE_URLS_CSV = 'google_urls.csv'
 
 
 def authenticate_google_drive():
@@ -224,25 +228,45 @@ if __name__ == '__main__':
         master_dict.remove_key(file_name)
         master_dict.write(JSON)
 
-    image_folder = 'images 3.0'
     # check for images larger than 100k
-    print(f'checking for image files larger than 100kb')
-    results = master_dict[image_folder].recursive_get_key('size')
+    print(f'checking for image files larger than 100kb in {IMAGES_FOLDER}')
+    results = master_dict[IMAGES_FOLDER].recursive_get_key('size')
     for result in results:
         if int(result[2]) > 100000:
             print(result)
 
     # check for the correct number of images
     print(f'checking for correct number of images (427)')
-
     loc_speed_nums = []
     for dir in [-1, 1]:
         for speed in range(3, 11):
-            results = master_dict[image_folder].recursive_get_key(str(dir * speed))
+            results = master_dict[IMAGES_FOLDER].recursive_get_key(str(dir * speed))
             loc_speed_nums.extend([(ls[0].split(' ')[0], int(ls[0].split(' ')[2]), len(ls[2].keys()) - 1) for ls in results])
     loc_speed_nums.sort()
     for lsn in loc_speed_nums:
         if lsn[2] != 427:
             print(f'** {lsn}')
-        else:
-            print(f'{lsn}')
+
+    # create google urls csv file
+    print('creating csv file {GOOGLE_URLS_CSV}')
+    results = master_dict[IMAGES_FOLDER].recursive_get_key('mimeType')  # XXX-graphs > speed > filename > 'mimetype', 'mimeType', actual mimeType
+    image_names = [result[0].split(' > ')[2] for result in results if result[2] == PNG_MIMETYPE]  # filename => loc speed year month day.png
+
+    loc_speeds = list(set([(img.split(' ')[0],  int(img.split(' ')[1])) for img in image_names]))
+    loc_speeds.sort()
+    loc_speeds = [f'{ls[0]} {ls[1]}' for ls in loc_speeds]
+
+    dates = list(set([(int(img.split(' ')[2]), int(img.split(' ')[3]), int(img.split(' ')[4].split('.')[0])) for img in image_names]))
+    dates.sort()
+    dates = [f'{d[1]}/{d[2]}/{d[0]}' for d in dates]
+
+    dates_dictionary = Dictionary({date: {'date': date} for date in dates})
+    for img in image_names:
+        loc_speed = f'{img.split(' ')[0]} {int(img.split(' ')[1])}'
+        date = f'{int(img.split(' ')[3])}/{int(img.split(' ')[4].split('.')[0])}/{int(img.split(' ')[2])}'
+        dates_dictionary[date][loc_speed] = f'{CSV_PREFIX}{master_dict['name_id'].get(img)[0]}{CSV_SUFFIX}'
+
+    image_frame = DataFrame(columns=['date'] + loc_speeds)
+    for date in dates:
+        image_frame.loc[len(image_frame)] = dates_dictionary[date]
+    image_frame.write(GOOGLE_URLS_CSV)
