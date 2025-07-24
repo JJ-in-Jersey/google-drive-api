@@ -18,7 +18,9 @@ from tt_exceptions.exceptions import GoogleAuthenticationFailure, GoogleServiceB
 # use 'https://www.googleapis.com/auth/drive.file'
 # which only allows access to files created or opened by the app.
 SCOPES = ['https://www.googleapis.com/auth/drive']
-JSON = Path('google_drive.json')
+CLIENT_SECRET_JSON = 'client_secret.json'
+TOKEN_JSON = 'token.json'
+DRIVE_JSON = Path('google_drive.json')
 CSV_PREFIX = 'https://drive.google.com/file/d/'
 CSV_SUFFIX = '/view?usp=drive_link'
 FOLDER_MIMETYPE = 'application/vnd.google-apps.folder'
@@ -38,8 +40,8 @@ def authenticate_google_drive():
     # The file token.json stores the user's access and refresh tokens, and is
     # created automatically when the authorization flow completes for the first
     # time.
-    if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+    if os.path.exists(TOKEN_JSON):
+        creds = Credentials.from_authorized_user_file(TOKEN_JSON, SCOPES)
     # If there are no (valid) credentials available, let the user log in.
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
@@ -47,11 +49,15 @@ def authenticate_google_drive():
         else:
             # The client_secrets.json file contains your OAuth 2.0 client ID and client secret.
             # You download this from the Google Cloud Console.
-            flow = InstalledAppFlow.from_client_secrets_file(
-                'client_secrets.json', SCOPES)
-            creds = flow.run_local_server(port=0)
+            if Path(CLIENT_SECRET_JSON).exists():
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    CLIENT_SECRET_JSON, SCOPES)
+                creds = flow.run_local_server(port=0)
+            else:
+                raise GoogleAuthenticationFailure('No credentials file found')
+
         # Save the credentials for the next run
-        with open('token.json', 'w') as token:
+        with open(TOKEN_JSON, 'w') as token:
             token.write(creds.to_json())
     return creds
 
@@ -211,11 +217,11 @@ if __name__ == '__main__':
         raise GoogleServiceBuildFailure
 
     # get all files and folders
-    if os.path.exists(JSON):
-        master_dict = Dictionary(json_source=JSON)
+    if os.path.exists(DRIVE_JSON):
+        master_dict = Dictionary(json_source=DRIVE_JSON)
     else:
         master_dict = build_dict_from_folder(service, "images 3.0")
-        master_dict.write(JSON)
+        master_dict.write(DRIVE_JSON)
 
 
     # delete .DS_Store files from Mac
@@ -226,7 +232,7 @@ if __name__ == '__main__':
         for id in file_ids:
             delete_file(service, file_name, id)
         master_dict.remove_key(file_name)
-        master_dict.write(JSON)
+        master_dict.write(DRIVE_JSON)
 
     # check for images larger than 100k
     print(f'checking for image files larger than 100kb in {IMAGES_FOLDER}')
