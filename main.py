@@ -114,7 +114,7 @@ def build_dict_from_folder(service, folder_name: str = None):
         current_folder_dict.pop('mimeType')
 
         if max_name_length - len(current_folder_name) > 0:
-            indent += ' ' * max_name_length - len(current_folder_name)
+            indent += ' ' * (max_name_length - len(current_folder_name))
 
         print(indent + current_folder_name)
 
