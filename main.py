@@ -219,8 +219,8 @@ if __name__ == '__main__':
     file_name = '.DS_Store'
     file_ids = master_dict['name_id'].get(file_name)
     if file_ids is not None and len(file_ids):
-        # for id in file_ids:
-        #     delete_file(service, file_name, id)
+        for id in file_ids:
+            delete_file(service, file_name, id)
         master_dict.remove_key(file_name)
         master_dict.write(JSON)
 
