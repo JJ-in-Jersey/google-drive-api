@@ -231,8 +231,8 @@ if __name__ == '__main__':
     if file_ids is not None and len(file_ids):
         for id in file_ids:
             delete_file(service, file_name, id)
-        master_dict.remove_key(file_name)
-        master_dict.write(DRIVE_JSON)
+    master_dict.remove_key(file_name)
+    master_dict.write(DRIVE_JSON)
 
     # check for images larger than 100k
     print(f'checking for image files larger than 100kb in {IMAGES_FOLDER}')
