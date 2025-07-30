@@ -1,12 +1,13 @@
 import os
-# import io
+from operator import itemgetter
+from statistics import mean
 from pathlib import Path
+from scipy.stats import zscore
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-# from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
 from tt_dictionary.dictionary import Dictionary
 from tt_dataframe.dataframe import DataFrame
@@ -231,27 +232,49 @@ if __name__ == '__main__':
     if file_ids is not None and len(file_ids):
         for id in file_ids:
             delete_file(service, file_name, id)
-    master_dict.remove_key(file_name)
-    master_dict.write(DRIVE_JSON)
+        master_dict.remove_key(file_name)
+        master_dict.write(DRIVE_JSON)
 
     # check for images larger than 100k
     print(f'checking for image files larger than 100kb in {IMAGES_FOLDER}')
-    results = master_dict[IMAGES_FOLDER].recursive_get_key('size')
-    for result in results:
-        if int(result[2]) > 100000:
-            print(result)
+    results = master_dict[IMAGES_FOLDER].recursive_get_keys('size', )
+    for r in results:
+        if int(r[1]) > 100000:
+            print(r)
 
     # check for the correct number of images
     print(f'checking for correct number of images (427)')
-    loc_speed_nums = []
+    loc_speed_count = []
     for dir in [-1, 1]:
         for speed in range(3, 11):
-            results = master_dict[IMAGES_FOLDER].recursive_get_key(str(dir * speed))
-            loc_speed_nums.extend([(ls[0].split(' ')[0], int(ls[0].split(' ')[2]), len(ls[2].keys()) - 1) for ls in results])
-    loc_speed_nums.sort()
-    for lsn in loc_speed_nums:
-        if lsn[2] != 427:
-            print(f'** {lsn}')
+            results = master_dict[IMAGES_FOLDER].recursive_get_keys(str(dir * speed))
+            loc_speed_count.extend([(r[0], len(r[1]) - 1) for r in results])
+    loc_speed_count = sorted(loc_speed_count, key=itemgetter(0))
+    loc_speed_count = sorted(loc_speed_count, key=lambda item: int(item[0][1]))
+    for lsc in loc_speed_count:
+        if lsc[1] != 427:
+            print(f'** {lsc}')
+
+    # check for unusually large or small images
+    print(f'checking for unusually large images')
+    file_sizes = []
+    for dir in [-1, 1]:
+        for speed in range(3, 11):
+            results = master_dict[IMAGES_FOLDER].recursive_get_keys(str(dir * speed))
+            file_sizes.extend((r[0], k, r[1][k]['size']) for r in results for k in list(r[1].keys())[1:])
+    average = int(round(mean([int(fs[2]) for fs in file_sizes]), 0))
+    z_scores = zscore([fs[2] for fs in file_sizes])
+    paths = [fs[0] + [fs[1]] + ['zscore'] for fs in file_sizes]
+    for i in range(len(z_scores)):
+        master_dict[IMAGES_FOLDER].set_by_path(paths[i], round(float(z_scores[i]), 2))
+
+    outliers = master_dict[IMAGES_FOLDER].recursive_get_keys('zscore')
+    outliers = [ol for ol in outliers if ol[1] > 3]
+
+    for ol in outliers:
+        size = master_dict[IMAGES_FOLDER].get_by_path(ol[0][:-1] + ['size'])
+        print(f'     {ol[0][:-1]} zscore: {ol[1]} size: {size} average: {average}')
+
 
     # create google urls csv file
     print('creating csv file {GOOGLE_URLS_CSV}')
