@@ -296,11 +296,6 @@ if __name__ == '__main__':
     for type in TYPE_DICT.keys():
         if master_dict.get(type):
             print(f'checking for unusually large or small images in [{IMAGES_FOLDER}][{type}]')
-            # file_sizes = []
-            # fss = master_dict[type].find_keys('_size')
-            # for fs in fss:
-            #     if master_dict.parent(fs[0])['_mimeType'] == PNG_MIMETYPE:
-            #         file_sizes.append(fs)
             file_sizes = [fs for fs in master_dict[type].find_keys('_size') if master_dict.parent(fs[0])['_mimeType'] == PNG_MIMETYPE]
             average = int(round(mean([int(fs[1]) for fs in file_sizes])))
             z_scores = [round(zs, 2) for zs in zscore([fs[1] for fs in file_sizes])]
@@ -321,7 +316,7 @@ if __name__ == '__main__':
         date = f'{ymd[1]}/{ymd[2]}/{ymd[0]}'
         column_name = f'{fields[1]} {fields[2]}'
         columns.setdefault(column_name, {})
-        columns[column_name][date] = f'{CSV_PREFIX}id{CSV_SUFFIX}'
+        columns[column_name][date] = f'{CSV_PREFIX}{id}{CSV_SUFFIX}'
 
     columns_list = list(columns.keys())
     columns_list.sort(key=lambda x: (x.split()[0], int(x.split()[1])))
