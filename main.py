@@ -29,6 +29,7 @@ PNG_MIMETYPE = 'image/png'
 FILE_MIMETYPE = 'application/vnd.google-apps.file'
 IMAGES_FOLDER = 'images 3.0'
 GOOGLE_URLS_CSV = 'google_urls.csv'
+TYPE_DICT = {'graphs': {'size': 100000, 'z': 3}, 'tables': {'size': 10000, 'z': 4.7}}
 
 
 def authenticate_google_drive():
@@ -84,7 +85,7 @@ def delete_file(service, file_name: str, file_id: str):
         file_name: The name of the file to delete.
         file_id: The ID of the file to delete.
     """
-    print(f"\n--- Deleting File ({file_name}: {file_id}) ---")
+    print(f'deleting File ({file_name}: {file_id})')
     try:
         service.files().delete(fileId=file_id).execute()
         print(f"File ({file_name}: {file_id}) deleted successfully.")
@@ -92,210 +93,243 @@ def delete_file(service, file_name: str, file_id: str):
         print(f"An error occurred while deleting file: {error}")
 
 
-def build_dict_from_folder(service, folder_name: str = None):
+def get_drive_items(service, parent_id=None):
     """
-    Fetches files and folders from Google Drive starting from a specific non-root folder.
-
-    Args:
-        service: The authenticated Google Drive API service object.
-        folder_name: The name of the folder to start fetching from.
-
-    Returns:
-        # list: A list of dictionaries, each representing a file or folder with its metadata.
-        dict: a dictionary containing the file/folder tree and all the file/folder metadata
+    Retrieves files and folders for a given parent ID.
+    If parent_id is None, it gets items from My Drive (root).
     """
+    items = []
+    token = None
+    # Query to get children of a specific folder ID or 'root' (My Drive)
+    # and exclude trashed items.
+    query = f"'{parent_id}' in parents and trashed = false" if parent_id else "'root' in parents and trashed = false"
 
-    master_dict = Dictionary()
-    master_dict['name_id'] = None
-    master_dict['id_item'] = Dictionary()
-    master_dict['id_name'] = Dictionary()
-    folder_id = get_folder_id_by_name(service, folder_name)
-
-    # Helper recursive function to fetch descendants of a given folder
-    def fetch_descendants_recursive(current_folder_id, level: int = 0, max_name_length: int = 0):
-        indent = 2 * level * ' '
-        level += 1
-
-        current_folder_name = master_dict['id_name'].get(current_folder_id)
-        current_folder_dict = master_dict['id_item'].get(current_folder_id)
-        current_folder_dict.pop('mimeType')
-
-        if max_name_length - len(current_folder_name) > 0:
-            indent += ' ' * (max_name_length - len(current_folder_name))
-
-        print(indent + current_folder_name)
-
-        page_token = None
-        while True:
-            try:
-                query = f"'{current_folder_id}' in parents and trashed=false"
-                response = service.files().list(q=query, spaces='drive', fields='nextPageToken, files(id, name, mimeType, size)', pageToken=page_token).execute()
-                current_items = response.get('files', [])
-
-                max_name_length = 0
-                for item in current_items:
-                    item = Dictionary(item)
-                    name = item.pop('name')
-                    if item.get('mimeType') == FOLDER_MIMETYPE and max_name_length < len(name):
-                        max_name_length = len(name)
-                    master_dict['id_name'][item['id']] = name
-                    master_dict['id_item'][item['id']] = item
-                    current_folder_dict[name] = item
-
-                for item in current_items:
-                    if item.get('mimeType') == FOLDER_MIMETYPE:
-                        fetch_descendants_recursive(item['id'], level, max_name_length)  # Recursive call
-                    else:
-                        item.pop('mimeType')
-
-                page_token = response.get('nextPageToken', None)
-                if not page_token:
-                    break
-            except HttpError as error:
-                print(f"An error occurred while fetching descendants of folder ID '{current_folder_id}': {error}")
-                break
-
-
-    # If a specific folder ID, start the recursive fetching
-    # First, fetch the metadata of the start_folder_id itself, as it's the root of the desired tree
-    if folder_id is not None:
+    while True:
         try:
-            item = service.files().get(fileId=folder_id, fields='id, name, mimeType, size').execute()
-            item = Dictionary(item)
-            name = item.pop('name')
-            master_dict['id_name'][item.get('id')] = name
-            master_dict['id_item'][item.get('id')] = item
-            master_dict[name] = item
-
-            fetch_descendants_recursive(item.get('id'))
+            # Request only the fields essential for building the tree: id, name, mimeType, parents
+            response = service.files().list(q=query, spaces='drive',
+                                            fields='nextPageToken, files(id, name, size, mimeType)', pageToken=token).execute()
+            items.extend(response.get('files', []))
+            token = response.get('nextPageToken', None)
+            if not token:
+                break  # No more pages, exit loop
         except HttpError as error:
-            print(f"Error fetching metadata for start folder ID '{folder_id}': {error}")
-            return []  # Return empty if the start folder itself can't be fetched or is invalid
+            print(f'An error occurred while listing files: {error}')
+            break  # Exit on error
+    return items
 
 
-    master_dict['name_id'] = master_dict['id_name'].reverse()
-    return master_dict
-
-
-def get_folder_id_by_name(service, folder_name: str):
+def build_file_tree(service, start_folder_id: str = 'root', _path='', _progress: dict = None, _depth: int = 0, _parent_path: str = None):
     """
-    Find the ID of a folder by its name, specifically looking for direct children of 'My Drive'.
+    recursively builds a Dictionary representing the Google Drive file tree
+    :param service: authenticated Google Drive API service object
+    :param start_folder_id: ID of the starting folder; none returns entire drive (root)
+    :param _path: internal parameter for tracking current path
+    :param _progress: internal parameter for tracking progress
+    :param _depth: internal parameter for tracking indentation depth
+    :param _parent_path: internal parameter for tracking parent folder name
+    :return: Dictionary mirroring the Google Drive file tree
+    """
+    # Initialize progress tracking on first call
+    if _progress is None:
+        _progress = {'folders': 0, 'files': 0, 'current_folder': ''}
+        print("🚀 building Google Drive file tree")
 
-    Args:
-        service: The authenticated Google Drive API service object.
-        folder_name (str): The name of the folder to search for.
-    Returns:
-        str: The ID of the found folder, or None if not found.
+    _progress['current_folder'] = _path
+    indent = " " * _depth
+
+    tree = Dictionary()
+    items = get_drive_items(service, start_folder_id)
+
+    for item in items:
+
+        if item['mimeType'] == FOLDER_MIMETYPE:
+            # If it's a folder, recursively call build_file_tree for its contents
+            _progress['folders'] += 1
+
+            _path = f'{_parent_path}/{item['name']}' if _parent_path else item['name']
+            tree[item['name']] = Dictionary({'_path': _path, '_id': item['id'], '_mimeType': item['mimeType']})
+
+            # Count items in this folder before processing
+            folder_items = get_drive_items(service, item['id'])
+            folder_count = sum(1 for i in folder_items if i['mimeType'] == FOLDER_MIMETYPE)
+            file_count = len(folder_items) - folder_count
+
+            # Display parent/leaf folder with stats
+            if _parent_path:
+                print(f"{indent}📁 {_parent_path}/{item['name']} ({folder_count} folders, {file_count} files)")
+            else:
+                print(f"{indent}📁 {item['name']} ({folder_count} folders, {file_count} files)")
+
+            # Add folder contents directly to the tree, merging with the current level
+            folder_contents = build_file_tree(service, item['id'], _path, _progress, _depth + 1, _path)  # Recursive call with current folder as parent
+            tree[item['name']].update(folder_contents)
+            pass
+
+        else:
+            # If it's a file, add its details
+            _progress['files'] += 1
+            name = item.pop('name')
+            tree[name] = Dictionary({'_' + k: v for k, v in item.items()})
+            tree[name]['_path'] = f'{_parent_path}/{name}'
+
+    # Print summary when back at root
+    if _path == 'drive':
+        print(f"✅ Complete! Total: {_progress['folders']} folders, {_progress['files']} files")
+
+    return tree
+
+
+def get_folder_id_by_name(service, target_name: str):
+    """
+    retrieves the folder ID for a given folder name
+    :param service: authenticated Google Drive API service object
+    :param folder_name (str): target folder name
+    :return: id of the target folder
     """
     try:
         # Query for folders with the given name and whose parent is 'root' (My Drive)
-        query = f"name = '{folder_name}' and mimeType = 'application/vnd.google-apps.folder' and 'root' in parents and trashed=false"
+        query = f"name = '{target_name}' and mimeType = 'application/vnd.google-apps.folder' and 'root' in parents and trashed=false"
         response = service.files().list(q=query, spaces='drive', fields='files(id, name, parents)').execute()
         folders = response.get('files', [])
         if folders:
-            print(f"Found top-level folder '{folder_name}' with ID: {folders[0]['id']}")
+            print(f"Found top-level folder '{target_name}' with ID: {folders[0]['id']}")
             return folders[0]['id']  # Return the ID of the first matching folder
         else:
-            print(f"Folder '{folder_name}' not found at the highest level of your Drive.")
+            print(f"Folder '{target_name}' not found at the highest level of your Drive.")
             return None
     except HttpError as error:
         print(f"An error occurred while searching for folder: {error}")
         return None
 
 
+def get_all_folders_flat(service):
+    """
+    Retrieves a flat list of ALL folders (not files) from My Drive and its subfolders.
+    """
+    all_folders = []
+    page_token = None
+    # Query for all folders, recursively across the entire Drive
+    query = "mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+
+    while True:
+        try:
+            response = service.files().list(
+                q=query,
+                spaces='drive',
+                fields='nextPageToken, files(id, name, parents)',  # Need parents to build the tree
+                pageToken=page_token
+            ).execute()
+            all_folders.extend(response.get('files', []))
+            page_token = response.get('nextPageToken', None)
+            if not page_token:
+                break
+        except HttpError as error:
+            print(f'An error occurred while listing all folders: {error}')
+            break
+    return all_folders
+
+
 if __name__ == '__main__':
 
-    # Authenticate
+    # authenticate
     creds = authenticate_google_drive()
     if not creds:
         print("Authentication failed")
         raise GoogleAuthenticationFailure
 
-    # Build Drive Service
+    # build drive service
     service = build_drive_service(creds)
     if not service:
         print("Failed to build Drive service")
         raise GoogleServiceBuildFailure
 
-    # get all files and folders
+    # build dictionary
     if os.path.exists(DRIVE_JSON):
         master_dict = Dictionary(json_source=DRIVE_JSON)
     else:
-        master_dict = build_dict_from_folder(service, "images 3.0")
+        images_folder_id = get_folder_id_by_name(service, IMAGES_FOLDER)
+        master_dict = build_file_tree(service, images_folder_id)
         master_dict.write(DRIVE_JSON)
-
 
     # delete .DS_Store files from Mac
-    print(f'checking for .DS_Store files, Mac artifact')
-    file_name = '.DS_Store'
-    file_ids = master_dict['name_id'].get(file_name)
-    if file_ids is not None and len(file_ids):
-        for id in file_ids:
-            delete_file(service, file_name, id)
-        master_dict.remove_key(file_name)
+    file_name = 'delete_me.rtf'
+    print(f'\nchecking for {file_name} files, Mac artifact')
+    keys = master_dict.find_keys(file_name)
+    if keys:
+        for key in keys:
+            master_dict.del_key(key[0])
+            delete_file(service, key[0].rsplit('/', 1)[0], key[1]['_id'])
         master_dict.write(DRIVE_JSON)
 
-    # check for images larger than 100k
-    print(f'checking for image files larger than 100kb in {IMAGES_FOLDER}')
-    results = master_dict[IMAGES_FOLDER].recursive_get_keys('size', )
-    for r in results:
-        if int(r[1]) > 100000:
-            print(r)
+    # list locations
+    print(f'locations available on Google Drive')
+    for type in TYPE_DICT.keys():
+        if master_dict.get(type):
+            for loc in sorted([loc for loc in master_dict[type].keys() if loc[0] != '_']):
+                print(f'  {loc}')
+
+    # check for large files
+    for type in TYPE_DICT.keys():
+        if master_dict.get(type):
+            print(f'checking for image files larger than {TYPE_DICT[type]['size']} kb in [{IMAGES_FOLDER}][{type}]')
+            for r in master_dict[type].find_keys('_size'):
+                if int(r[1]) > TYPE_DICT[type]['size']:
+                    print(f' ** {r}')
 
     # check for the correct number of images
     print(f'checking for correct number of images (427)')
     loc_speed_count = []
-    for dir in [-1, 1]:
+    print(f' ', end='')
+    for sign in [-1, 1]:
         for speed in range(3, 11):
-            results = master_dict[IMAGES_FOLDER].recursive_get_keys(str(dir * speed))
-            loc_speed_count.extend([(r[0], len(r[1]) - 1) for r in results])
-    loc_speed_count = sorted(loc_speed_count, key=itemgetter(0))
-    loc_speed_count = sorted(loc_speed_count, key=lambda item: int(item[0][1]))
-    for lsc in loc_speed_count:
-        if lsc[1] != 427:
-            print(f'** {lsc}')
+            print(f'{sign * speed}  ', end='')
+            for r in master_dict.find_keys(str(sign * speed)):
+                length = len([k for k in r[1].keys() if k[0] != '_' and r[1][k]['_mimeType'] == PNG_MIMETYPE])
+                loc_speed_count.append((r[0].rsplit('/', 1)[0], int(r[0].split('/')[-1]), length))
+    print('')
+    for lsc in sorted(loc_speed_count, key=itemgetter(0, 1)):
+        if lsc[2] != 427:
+            print(f' ***  {lsc[0]}/{lsc[1]} {lsc[2]}')
 
     # check for unusually large or small images
-    print(f'checking for unusually large images')
-    file_sizes = []
-    for dir in [-1, 1]:
-        for speed in range(3, 11):
-            results = master_dict[IMAGES_FOLDER].recursive_get_keys(str(dir * speed))
-            file_sizes.extend((r[0], k, r[1][k]['size']) for r in results for k in list(r[1].keys())[1:])
-    average = int(round(mean([int(fs[2]) for fs in file_sizes]), 0))
-    z_scores = zscore([fs[2] for fs in file_sizes])
-    paths = [fs[0] + [fs[1]] + ['zscore'] for fs in file_sizes]
-    for i in range(len(z_scores)):
-        master_dict[IMAGES_FOLDER].set_by_path(paths[i], round(float(z_scores[i]), 2))
-
-    outliers = master_dict[IMAGES_FOLDER].recursive_get_keys('zscore')
-    outliers = [ol for ol in outliers if ol[1] > 3]
-
-    for ol in outliers:
-        size = master_dict[IMAGES_FOLDER].get_by_path(ol[0][:-1] + ['size'])
-        print(f'     {ol[0][:-1]} zscore: {ol[1]} size: {size} average: {average}')
-
+    for type in TYPE_DICT.keys():
+        if master_dict.get(type):
+            print(f'checking for unusually large or small images in [{IMAGES_FOLDER}][{type}]')
+            # file_sizes = []
+            # fss = master_dict[type].find_keys('_size')
+            # for fs in fss:
+            #     if master_dict.parent(fs[0])['_mimeType'] == PNG_MIMETYPE:
+            #         file_sizes.append(fs)
+            file_sizes = [fs for fs in master_dict[type].find_keys('_size') if master_dict.parent(fs[0])['_mimeType'] == PNG_MIMETYPE]
+            average = int(round(mean([int(fs[1]) for fs in file_sizes])))
+            z_scores = [round(zs, 2) for zs in zscore([fs[1] for fs in file_sizes])]
+            outliers = [(fs[0].rsplit('/', 1)[0], fs[1], z_scores[i]) for i, fs in enumerate(file_sizes) if abs(z_scores[i]) > TYPE_DICT[type]['z']]
+            print(f'\n{type}')
+            for ol in outliers:
+                print(f'  path: {ol[0]}  size: {ol[1]}  ave: {average}  z: {ol[2]} ({TYPE_DICT[type]['z']})')
 
     # create google urls csv file
     print('creating csv file {GOOGLE_URLS_CSV}')
-    results = master_dict[IMAGES_FOLDER].recursive_get_key('mimeType')  # XXX-graphs > speed > filename > 'mimetype', 'mimeType', actual mimeType
-    image_names = [result[0].split(' > ')[2] for result in results if result[2] == PNG_MIMETYPE]  # filename => loc speed year month day.png
-
-    loc_speeds = list(set([(img.split(' ')[0],  int(img.split(' ')[1])) for img in image_names]))
-    loc_speeds.sort()
-    loc_speeds = [f'{ls[0]} {ls[1]}' for ls in loc_speeds]
-
-    dates = list(set([(int(img.split(' ')[2]), int(img.split(' ')[3]), int(img.split(' ')[4].split('.')[0])) for img in image_names]))
-    dates.sort()
-    dates = [f'{d[1]}/{d[2]}/{d[0]}' for d in dates]
-
-    dates_dictionary = Dictionary({date: {'date': date} for date in dates})
-    for img in image_names:
-        loc_speed = f'{img.split(' ')[0]} {int(img.split(' ')[1])}'
-        date = f'{int(img.split(' ')[3])}/{int(img.split(' ')[4].split('.')[0])}/{int(img.split(' ')[2])}'
-        dates_dictionary[date][loc_speed] = f'{CSV_PREFIX}{master_dict['name_id'].get(img)[0]}{CSV_SUFFIX}'
-
-    image_frame = DataFrame(columns=['date'] + loc_speeds)
-    for date in dates:
-        image_frame.loc[len(image_frame)] = dates_dictionary[date]
-    image_frame.write(GOOGLE_URLS_CSV)
+    results = master_dict.find_keys('_mimeType', PNG_MIMETYPE)
+    image_info = [(r[0][1], r[0][2], r[0][3]) for r in results if r[1] == PNG_MIMETYPE]
+    # image_ids = [(i[2], master_dict['name_id'][i[2]]) for i in image_info]
+    #
+    # loc_speeds = list(set([[img[0], img[1]] for img in image_info]))
+    # loc_speeds = sorted(loc_speeds, key=itemgetter(0, 1))
+    # loc_speeds = [f'{ls[0]} {ls[1]}' for ls in loc_speeds]
+    #
+    # dates = list(set([(int(img.split(' ')[2]), int(img.split(' ')[3]), int(img.split(' ')[4].split('.')[0])) for img in image_names]))
+    # dates.sort()
+    # dates = [f'{d[1]}/{d[2]}/{d[0]}' for d in dates]
+    #
+    # dates_dictionary = {date: {'date': date} for date in dates}
+    # for img in image_names:
+    #     loc_speed = f'{img.split(' ')[0]} {int(img.split(' ')[1])}'
+    #     date = f'{int(img.split(' ')[3])}/{int(img.split(' ')[4].split('.')[0])}/{int(img.split(' ')[2])}'
+    #     dates_dictionary[date][loc_speed] = f'{CSV_PREFIX}{master_dict['name_id'].get(img)[0]}{CSV_SUFFIX}'
+    #
+    # image_frame = DataFrame(columns=['date'] + loc_speeds)
+    # for date in dates:
+    #     image_frame.loc[len(image_frame)] = dates_dictionary[date]
+    # image_frame.write(GOOGLE_URLS_CSV)
