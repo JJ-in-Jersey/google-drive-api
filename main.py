@@ -311,25 +311,25 @@ if __name__ == '__main__':
 
     # create google urls csv file
     print('creating csv file {GOOGLE_URLS_CSV}')
+    columns = Dictionary()
     results = master_dict.find_keys('_mimeType', PNG_MIMETYPE)
-    image_info = [(r[0][1], r[0][2], r[0][3]) for r in results if r[1] == PNG_MIMETYPE]
-    # image_ids = [(i[2], master_dict['name_id'][i[2]]) for i in image_info]
-    #
-    # loc_speeds = list(set([[img[0], img[1]] for img in image_info]))
-    # loc_speeds = sorted(loc_speeds, key=itemgetter(0, 1))
-    # loc_speeds = [f'{ls[0]} {ls[1]}' for ls in loc_speeds]
-    #
-    # dates = list(set([(int(img.split(' ')[2]), int(img.split(' ')[3]), int(img.split(' ')[4].split('.')[0])) for img in image_names]))
-    # dates.sort()
-    # dates = [f'{d[1]}/{d[2]}/{d[0]}' for d in dates]
-    #
-    # dates_dictionary = {date: {'date': date} for date in dates}
-    # for img in image_names:
-    #     loc_speed = f'{img.split(' ')[0]} {int(img.split(' ')[1])}'
-    #     date = f'{int(img.split(' ')[3])}/{int(img.split(' ')[4].split('.')[0])}/{int(img.split(' ')[2])}'
-    #     dates_dictionary[date][loc_speed] = f'{CSV_PREFIX}{master_dict['name_id'].get(img)[0]}{CSV_SUFFIX}'
-    #
-    # image_frame = DataFrame(columns=['date'] + loc_speeds)
-    # for date in dates:
-    #     image_frame.loc[len(image_frame)] = dates_dictionary[date]
-    # image_frame.write(GOOGLE_URLS_CSV)
+    for r in results:
+        fields = r[0].split('/')
+        id = master_dict.parent(r[0])['_id']
+        name = fields[3][:-4]
+        ymd = name.split()[2:]
+        date = f'{ymd[1]}/{ymd[2]}/{ymd[0]}'
+        column_name = f'{fields[1]} {fields[2]}'
+        columns.setdefault(column_name, {})
+        columns[column_name][date] = f'{CSV_PREFIX}id{CSV_SUFFIX}'
+
+    columns_list = list(columns.keys())
+    columns_list.sort(key=lambda x: (x.split()[0], int(x.split()[1])))
+
+    columns = Dictionary({key: columns[key] for key in columns_list})
+    for k, v in columns.items():
+        columns[k] = Dictionary({key: v[key] for key in sorted(v)})
+
+    # image_frame = DataFrame(columns=list(columns.keys()))
+    image_frame = DataFrame(columns)
+    image_frame.write(GOOGLE_URLS_CSV)
