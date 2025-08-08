@@ -311,9 +311,9 @@ if __name__ == '__main__':
     for r in results:
         fields = r[0].split('/')
         id = master_dict.parent(r[0])['_id']
-        name = fields[3][:-4]
-        ymd = name.split()[2:]
-        date = f'{ymd[1]}/{ymd[2]}/{ymd[0]}'
+        file_name = fields[3][:-4]
+        ymd = file_name.split()[2:]  # year, month, day
+        date = f'{ymd[0]}/{ymd[1]}/{ymd[2]}'
         column_name = f'{fields[1]} {fields[2]}'
         columns.setdefault(column_name, {})
         columns[column_name][date] = f'{CSV_PREFIX}{id}{CSV_SUFFIX}'
@@ -325,6 +325,9 @@ if __name__ == '__main__':
     for k, v in columns.items():
         columns[k] = Dictionary({key: v[key] for key in sorted(v)})
 
-    # image_frame = DataFrame(columns=list(columns.keys()))
     image_frame = DataFrame(columns)
+    image_frame.insert(0, 'date', value=None)
+    image_frame['date'] = image_frame.index
+    image_frame['date'] = image_frame['date'].apply(lambda x: f'{x.split('/')[1]}/{x.split('/')[2]}/{x.split('/')[0]}')
+    image_frame.reset_index(drop=True, inplace=True)
     image_frame.write(GOOGLE_URLS_CSV)
