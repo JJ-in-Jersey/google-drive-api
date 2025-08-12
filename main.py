@@ -328,6 +328,6 @@ if __name__ == '__main__':
     image_frame = DataFrame(columns)
     image_frame.insert(0, 'date', value=None)
     image_frame['date'] = image_frame.index
-    image_frame['date'] = image_frame['date'].apply(lambda x: f'{x.split('/')[1]}/{x.split('/')[2]}/{x.split('/')[0]}')
+    image_frame['date'] = image_frame['date'].apply(lambda x: f'{x.split('/')[1]}/{x.split('/')[2]}/20{x.split('/')[0]}')
     image_frame.reset_index(drop=True, inplace=True)
     image_frame.write(GOOGLE_URLS_CSV)
