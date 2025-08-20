@@ -148,7 +148,7 @@ def build_file_tree(service, start_folder_id: str = 'root', _path='', _progress:
             _progress['folders'] += 1
 
             _path = f'{_parent_path}/{item['name']}' if _parent_path else item['name']
-            tree[item['name']] = Dictionary({'_path': _path, '_id': item['id'], '_mimeType': item['mimeType']})
+            tree[item['name']] = Dictionary({'_id': item['id'], '_mimeType': item['mimeType']}, parent_path=_path)
 
             # Count items in this folder before processing
             folder_items = get_drive_items(service, item['id'])
@@ -170,8 +170,7 @@ def build_file_tree(service, start_folder_id: str = 'root', _path='', _progress:
             # If it's a file, add its details
             _progress['files'] += 1
             name = item.pop('name')
-            tree[name] = Dictionary({'_' + k: v for k, v in item.items()})
-            tree[name]['_path'] = f'{_parent_path}/{name}'
+            tree[name] = Dictionary({'_' + k: v for k, v in item.items()}, parent_path=f'{_parent_path}/{name}')
 
     # Print summary when back at root
     if _path == 'drive':
@@ -253,7 +252,7 @@ if __name__ == '__main__':
         master_dict.write(DRIVE_JSON)
 
     # delete .DS_Store files from Mac
-    file_name = 'delete_me.rtf'
+    file_name = '.DS_Store'
     print(f'\nchecking for {file_name} files, Mac artifact')
     keys = master_dict.find_keys(file_name)
     if keys:
