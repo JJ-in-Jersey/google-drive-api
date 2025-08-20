@@ -304,7 +304,7 @@ if __name__ == '__main__':
                 print(f'  path: {ol[0]}  size: {ol[1]}  ave: {average}  z: {ol[2]} ({TYPE_DICT[type]['z']})')
 
     # create google urls csv file
-    print('creating csv file {GOOGLE_URLS_CSV}')
+    print(f'creating csv file {GOOGLE_URLS_CSV}')
     columns = Dictionary()
     results = master_dict.find_keys('_mimeType', PNG_MIMETYPE)
     for r in results:
